@@ -1,0 +1,9 @@
+# 錨定根目錄,避免誤排除 lib/supabase/ 等同名子目錄
+*-token-*.md
+.env*.local
+.deploy-secrets.local
+/legacy/
+/supabase/
+/scripts/
+/.docker-home/
+*.xlsx

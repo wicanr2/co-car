@@ -1,0 +1,21 @@
+# 本機開發用 (docker-first)。Next.js dev server 跑在 container 內,
+# 透過 network_mode: host 連到 host 上的 Supabase 本機堆疊 (127.0.0.1:54321)。
+# 用法: docker compose -f docker-compose.dev.yml up
+services:
+  web:
+    image: node:22-bookworm-slim
+    container_name: cocar_web_dev
+    working_dir: /app
+    # host 網路: container 直接用 host 的 loopback/網卡。
+    # 好處: 1) 連得到 host published 的 supabase kong 54321
+    #       2) dev server 的 3101 直接暴露在 host,免 port mapping
+    network_mode: host
+    # 與 host anr2 (uid 1000) 一致,避免 .next / .turbo 產生 root 檔案
+    user: "1000:1000"
+    environment:
+      - HOME=/app/.docker-home
+      - NEXT_TELEMETRY_DISABLED=1
+    volumes:
+      - .:/app
+    # next dev 預設只 bind localhost;-H 0.0.0.0 確保 host 模式下連得到
+    command: sh -c "mkdir -p /app/.docker-home && npm run dev -- -p 3101 -H 0.0.0.0"

@@ -1,0 +1,18 @@
+# 本機 production 模式(port 3101)。
+# 原因:Turbopack dev server 在此環境 client 端 hydration 不完成(登入卡載入中),
+# 改用 next build + next start(= Vercel 部署的同款環境),登入與 app 正常運作。
+# 用法: docker compose -f docker-compose.local.yml up -d --build 後跑 npm run build && start
+services:
+  web:
+    image: node:22-bookworm-slim
+    container_name: cocar_web_local
+    working_dir: /app
+    network_mode: host
+    user: "1000:1000"
+    environment:
+      - HOME=/app/.docker-home
+      - NEXT_TELEMETRY_DISABLED=1
+    volumes:
+      - .:/app
+    command: sh -c "mkdir -p /app/.docker-home && npm run build && npm run start -- -p 3101 -H 0.0.0.0"
+    restart: unless-stopped
