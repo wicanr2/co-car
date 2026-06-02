@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { decodeClaims } from '@/lib/jwt';
-import { addDays, minBookableDate, isReservationOpen, fmtSlot } from '@/lib/date';
+import { addDays, minBookableDate, isReservationOpen, fmtSlot, today } from '@/lib/date';
 import { reservationsToCsv, downloadCsv } from '@/lib/csv';
 import RouteMap from '@/components/RouteMap';
 import SlotManager from '@/components/SlotManager';
@@ -159,7 +159,10 @@ export default function ReservationApp() {
     ? [{ key: 'book', label: '預約' }, { key: 'schedule', label: '排班' }, { key: 'slots', label: '班次' }, { key: 'users', label: '使用者' }]
     : [{ key: 'book', label: '預約' }];
 
-  const atMinDate = currentDate <= minDate;
+  // 排班視角(admin 看每日乘客名單)可瀏覽任意日期 — 包含已過截止的明天、
+  // 甚至過去的紀錄;只有「預約」視角才受最早可約日(cutoff)限制。
+  const inSchedule = view === 'schedule';
+  const atLowerBound = !inSchedule && currentDate <= minDate;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#e0f2f1] via-[#e8f5e9] to-[#b2ebf2] pb-20 md:pb-10 font-sans">
@@ -202,7 +205,7 @@ export default function ReservationApp() {
         {/* 日期選擇器(僅 book / schedule 視角需要) */}
         {(view === 'book' || view === 'schedule') && (
           <div className="bg-white rounded-2xl shadow-sm p-4 flex items-center justify-between">
-            <button onClick={() => !atMinDate && setCurrentDate(addDays(currentDate, -1))} disabled={atMinDate}
+            <button onClick={() => !atLowerBound && setCurrentDate(addDays(currentDate, -1))} disabled={atLowerBound}
               className="p-2 hover:bg-teal-50 rounded-full transition-colors text-teal-600 disabled:opacity-30 disabled:cursor-not-allowed">
               <ChevronLeft className="w-6 h-6" />
             </button>
@@ -210,10 +213,17 @@ export default function ReservationApp() {
               <h2 className="text-xl font-bold text-teal-800 flex items-center justify-center gap-2">
                 <CalendarDays className="w-5 h-5" />{currentDate}
               </h2>
-              <button onClick={() => setCurrentDate(minDate)}
-                className="text-sm mt-1 font-medium text-teal-500 hover:text-teal-700">
-                最近可約日({minDate})
-              </button>
+              {inSchedule ? (
+                <button onClick={() => setCurrentDate(today())}
+                  className="text-sm mt-1 font-medium text-teal-500 hover:text-teal-700">
+                  回到今天({today()})
+                </button>
+              ) : (
+                <button onClick={() => setCurrentDate(minDate)}
+                  className="text-sm mt-1 font-medium text-teal-500 hover:text-teal-700">
+                  最近可約日({minDate})
+                </button>
+              )}
             </div>
             <button onClick={() => setCurrentDate(addDays(currentDate, 1))}
               className="p-2 hover:bg-teal-50 rounded-full transition-colors text-teal-600">
