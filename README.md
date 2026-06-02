@@ -1,7 +1,11 @@
 # 力行國泰接駁車預約系統 (co-car)
 
-員工接駁車線上預約系統。力行廠 → 苗栗國泰,三班次(07:30 / 08:00 / 08:30),
-各班次獨立座位上限(5 / 7 / 9),預約日「前一天 17:00」截止。
+[![CI](https://github.com/wicanr2/co-car/actions/workflows/ci.yml/badge.svg)](https://github.com/wicanr2/co-car/actions/workflows/ci.yml)
+
+員工接駁車線上預約系統。**新竹市東區力行路11號 → 苗栗縣竹南鎮國泰路20號**,
+發車班次與座位上限由管理員設定(目前 08:40、5 位),預約日「前一天 17:00」截止。
+
+🔗 線上:**https://co-car.vercel.app**(登入:工號 + 中文姓名)
 
 > 由 `frontend.md` 的 React 原型(localStorage 版)演進為 Next.js 16 + Supabase 多人系統。
 > 架構與部署沿用 dinbando 範本(見 `PLAN.md`)。
@@ -15,7 +19,7 @@
 | 詞 | 意義 |
 |---|---|
 | Reservation | 一筆預約,(emp_id, date) 一人一日一筆 |
-| Slot | 發車班次(07:30/08:00/08:30),各有 capacity |
+| Slot | 發車班次(departure_time),各有 capacity,admin 可增刪改 |
 | cutoff | 去程日「前一天」cutoff_hour:00(Asia/Taipei)截止 |
 | Admin | is_admin 員工:排班 / 班次設定 / 使用者管理 |
 
@@ -35,3 +39,9 @@ bash make-dev.sh          # 一鍵啟動(Supabase + dev server)
 
 ## 部署
 見 `.claude/skills/deploy-supabase-vercel/SKILL.md`(含四個踩坑修正)。
+
+## CI
+`.github/workflows/ci.yml`:每次 push / PR 跑 `typecheck → lint → build`(Node 22)。
+
+## License
+[MIT](./LICENSE) © 2026 L.CY (wicanr2)
