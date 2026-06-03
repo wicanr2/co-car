@@ -45,3 +45,6 @@ npm-debug.log*
 
 # 截圖 / 暫存
 .scratch/
+
+# 暫存的雲端 env 備份(含 service key,絕不入庫)
+*.cloudbak

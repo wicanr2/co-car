@@ -58,17 +58,17 @@ export default function UserManager() {
   };
 
   const startEdit = (u: Profile) => {
-    setEditId(u.emp_id);
+    setEditId(u.account_id ?? u.emp_id);
     setEName(u.name);
     setEDept(u.department ?? '');
     setEAdmin(u.is_admin);
   };
 
-  const saveEdit = async (empId: string) => {
+  const saveEdit = async (acct: string) => {
     const res = await fetch('/api/admin/users', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empId, name: eName, department: eDept, isAdmin: eAdmin }),
+      body: JSON.stringify({ acct, name: eName, department: eDept, isAdmin: eAdmin }),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) { flash(json.error ?? '更新失敗', 'error'); return; }
@@ -81,7 +81,7 @@ export default function UserManager() {
     const res = await fetch('/api/admin/users', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empId: u.emp_id, active: !(u.active ?? true) }),
+      body: JSON.stringify({ acct: u.account_id ?? u.emp_id, active: !(u.active ?? true) }),
     });
     if (!res.ok) { flash('操作失敗', 'error'); return; }
     flash((u.active ?? true) ? '已停用(無法登入)' : '已啟用');
@@ -157,10 +157,11 @@ export default function UserManager() {
               </thead>
               <tbody className="text-sm">
                 {users.map((u) => {
-                  const editing = editId === u.emp_id;
+                  const acct = u.account_id ?? u.emp_id;
+                  const editing = editId === acct;
                   const active = u.active ?? true;
                   return (
-                    <tr key={u.emp_id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                    <tr key={acct} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                       <td className="py-3 font-medium text-gray-500">{u.emp_id}</td>
                       <td className="py-3">
                         {editing
@@ -195,7 +196,7 @@ export default function UserManager() {
                         <div className="flex items-center justify-end gap-2">
                           {editing ? (
                             <>
-                              <button onClick={() => saveEdit(u.emp_id)} title="儲存"
+                              <button onClick={() => saveEdit(acct)} title="儲存"
                                 className="p-1.5 text-teal-600 hover:bg-teal-50 rounded-lg transition-colors"><Save className="w-4 h-4" /></button>
                               <button onClick={() => setEditId(null)} title="取消"
                                 className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"><X className="w-4 h-4" /></button>

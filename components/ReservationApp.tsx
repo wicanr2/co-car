@@ -15,7 +15,7 @@ import SlotManager from '@/components/SlotManager';
 import UserManager from '@/components/UserManager';
 import type { ShuttleSlot, ShuttleConfig, Reservation, SlotAvailability } from '@/types';
 
-interface Me { empId: string; name: string; isAdmin: boolean }
+interface Me { acct: string; empId: string; name: string; isAdmin: boolean }
 type View = 'book' | 'schedule' | 'slots' | 'users';
 
 export default function ReservationApp() {
@@ -53,7 +53,12 @@ export default function ReservationApp() {
       if (!session) { router.push('/login'); return; }
       const claims = decodeClaims(session.access_token);
       const meta = session.user.user_metadata ?? {};
-      setMe({ empId: claims.emp_id ?? meta.emp_id ?? '', name: meta.name ?? claims.emp_id ?? '', isAdmin: !!claims.is_admin });
+      setMe({
+        acct: claims.acct ?? '',
+        empId: claims.emp_id ?? meta.emp_id ?? '',
+        name: claims.name ?? meta.name ?? claims.emp_id ?? '',
+        isAdmin: !!claims.is_admin,
+      });
 
       const [{ data: cfg }, { data: sl }] = await Promise.all([
         supabase.from('shuttle_config').select('*').eq('id', 'default').single(),
@@ -66,15 +71,15 @@ export default function ReservationApp() {
   }, [supabase, router]);
 
   // ── 載入某日:剩餘座位 + 我的預約 (+ admin 全部) ──
-  const loadDay = useCallback(async (date: string, isAdmin: boolean, empId: string) => {
+  const loadDay = useCallback(async (date: string, isAdmin: boolean, acct: string) => {
     const tasks: PromiseLike<unknown>[] = [
       supabase.rpc('get_slot_availability', { p_date: date }),
-      supabase.from('reservations').select('emp_id, date, departure_time, return_note, created_at').eq('emp_id', empId).eq('date', date).maybeSingle(),
+      supabase.from('reservations').select('account_id, emp_id, emp_name, date, departure_time, return_note, created_at').eq('account_id', acct).eq('date', date).maybeSingle(),
     ];
     if (isAdmin) {
       tasks.push(
         supabase.from('reservations')
-          .select('emp_id, date, departure_time, return_note, created_at, profiles(name, department)')
+          .select('account_id, emp_id, emp_name, date, departure_time, return_note, created_at, profiles(name, department)')
           .eq('date', date).order('departure_time'),
       );
     }
@@ -90,7 +95,7 @@ export default function ReservationApp() {
   }, [supabase]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { if (me) loadDay(currentDate, me.isAdmin, me.empId); }, [me, currentDate, loadDay]);
+  useEffect(() => { if (me) loadDay(currentDate, me.isAdmin, me.acct); }, [me, currentDate, loadDay]);
 
   // ── Realtime:當日預約變動即時更新 ──
   useEffect(() => {
@@ -99,7 +104,7 @@ export default function ReservationApp() {
       .channel(`res-${currentDate}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'reservations', filter: `date=eq.${currentDate}` },
-        () => loadDay(currentDate, me.isAdmin, me.empId))
+        () => loadDay(currentDate, me.isAdmin, me.acct))
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [me, currentDate, supabase, loadDay]);
@@ -114,7 +119,8 @@ export default function ReservationApp() {
   const submit = async () => {
     if (!me || !selectedSlot) { showToast('請選擇發車班次', 'error'); return; }
     const { error } = await supabase.from('reservations').upsert({
-      emp_id: me.empId, date: currentDate, departure_time: selectedSlot,
+      account_id: me.acct, emp_id: me.empId, emp_name: me.name,
+      date: currentDate, departure_time: selectedSlot,
       return_note: returnNote.trim() || null, updated_at: new Date().toISOString(),
     });
     if (error) {
@@ -123,21 +129,21 @@ export default function ReservationApp() {
       showToast(m, 'error'); return;
     }
     showToast('✅ 預約成功!');
-    loadDay(currentDate, me.isAdmin, me.empId);
+    loadDay(currentDate, me.isAdmin, me.acct);
   };
 
   const cancel = async () => {
     if (!me) return;
-    const { error } = await supabase.from('reservations').delete().match({ emp_id: me.empId, date: currentDate });
+    const { error } = await supabase.from('reservations').delete().match({ account_id: me.acct, date: currentDate });
     if (error) { showToast(/policy|row-level/i.test(error.message) ? '已過截止時間,無法取消' : '取消失敗', 'error'); return; }
     showToast('已取消預約');
-    loadDay(currentDate, me.isAdmin, me.empId);
+    loadDay(currentDate, me.isAdmin, me.acct);
   };
 
   const exportCsv = () => {
     if (allRes.length === 0) { showToast('這天還沒有人預約', 'error'); return; }
     const csv = reservationsToCsv(allRes.map((r) => ({
-      empId: r.emp_id, name: r.profiles?.name ?? r.emp_id, department: r.profiles?.department,
+      empId: r.emp_id, name: r.profiles?.name ?? r.emp_name ?? r.emp_id, department: r.profiles?.department,
       date: r.date, departure: fmtSlot(r.departure_time), returnNote: r.return_note, createdAt: r.created_at,
     })));
     downloadCsv(`接駁預約_${currentDate}.csv`, csv);
@@ -341,9 +347,9 @@ export default function ReservationApp() {
                     <table className="w-full text-sm border border-t-0 border-gray-100 rounded-b-xl overflow-hidden">
                       <tbody>
                         {list.map((r) => (
-                          <tr key={r.emp_id} className="border-b border-gray-50 last:border-0">
+                          <tr key={r.account_id} className="border-b border-gray-50 last:border-0">
                             <td className="px-4 py-2 font-medium text-gray-500 w-24">{r.emp_id}</td>
-                            <td className="px-2 py-2 font-medium text-gray-800">{r.profiles?.name ?? '—'}</td>
+                            <td className="px-2 py-2 font-medium text-gray-800">{r.profiles?.name ?? r.emp_name ?? '—'}</td>
                             <td className="px-2 py-2 text-gray-400">{r.profiles?.department ?? ''}</td>
                             <td className="px-4 py-2 text-gray-500 text-right">{r.return_note ?? ''}</td>
                           </tr>
@@ -365,7 +371,7 @@ export default function ReservationApp() {
               if (sl) setSlots(sl as ShuttleSlot[]);
               const { data: cfg } = await supabase.from('shuttle_config').select('*').eq('id', 'default').single();
               if (cfg) setConfig(cfg as ShuttleConfig);
-              loadDay(currentDate, me.isAdmin, me.empId);
+              loadDay(currentDate, me.isAdmin, me.acct);
             }} />
         )}
 

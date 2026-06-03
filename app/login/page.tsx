@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { empIdToEmail } from '@/lib/auth';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,14 +12,29 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   // 無密碼登入:以「工號 + 中文姓名」驗證,姓名即作為登入憑證(與 dinbando 一致)。
+  // 先呼叫 ensure:若此 (工號,姓名) 尚未建檔則自動建立(同工號不同名 = 獨立帳號),
+  // 取回該帳號的不可變 email,再進行登入。
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empId.trim() || !name.trim()) return;
     setLoading(true);
     setError('');
+
+    const ensure = await fetch('/api/auth/ensure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empId: empId.trim(), name: name.trim() }),
+    });
+    const ej = await ensure.json().catch(() => ({}));
+    if (!ensure.ok || !ej.email) {
+      setError(ej.error ?? '登入失敗,請稍後再試');
+      setLoading(false);
+      return;
+    }
+
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({
-      email: empIdToEmail(empId),
+      email: ej.email,
       password: name.trim(),
     });
     if (error) {

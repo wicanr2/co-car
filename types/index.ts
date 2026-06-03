@@ -1,5 +1,6 @@
 // ── 員工檔案 ──
 export interface Profile {
+  account_id?: string;   // = 工號|姓名,身分鍵(改名後變動)
   emp_id: string;
   name: string;
   department?: string | null;
@@ -29,7 +30,9 @@ export interface ShuttleConfig {
 
 // ── 預約 ──
 export interface Reservation {
-  emp_id: string;
+  account_id: string;      // = 工號|姓名,擁有鍵
+  emp_id: string;          // 工號(顯示快照)
+  emp_name?: string | null; // 姓名(顯示快照)
   date: string;            // 'YYYY-MM-DD'
   departure_time: string;  // 'HH:MM:SS'
   return_note?: string | null;

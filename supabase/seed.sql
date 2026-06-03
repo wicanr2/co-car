@@ -18,7 +18,8 @@ insert into profiles (emp_id, name, email, department) values
   ('T12349', '張小英', 't12349@test.local', '行政部');
 
 -- 明日 + 後日預約(避開已過截止的今日;遠低於各班次容量)
-insert into reservations (emp_id, date, departure_time, return_note) values
-  ('T12345', current_date + 1, '08:40', '約 18:30 回程'),
-  ('T12346', current_date + 1, '08:40', null),
-  ('T12347', current_date + 2, '08:40', '回程不搭');
+-- 身分鍵 account_id = 工號|姓名;emp_id/emp_name 為顯示快照。
+insert into reservations (account_id, emp_id, emp_name, date, departure_time, return_note) values
+  ('T12345|王小明', 'T12345', '王小明', current_date + 1, '08:40', '約 18:30 回程'),
+  ('T12346|林大華', 'T12346', '林大華', current_date + 1, '08:40', null),
+  ('T12347|陳美麗', 'T12347', '陳美麗', current_date + 2, '08:40', '回程不搭');
