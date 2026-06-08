@@ -61,12 +61,10 @@ export default function ReservationApp() {
         isAdmin: !!claims.is_admin,
       });
 
-      const [{ data: cfg }, { data: sl }] = await Promise.all([
+      const [{ data: cfg }] = await Promise.all([
         supabase.from('shuttle_config').select('*').eq('id', 'default').single(),
-        supabase.from('shuttle_slots').select('*').eq('active', true).order('sort_order'),
       ]);
       if (cfg) setConfig(cfg as ShuttleConfig);
-      if (sl) setSlots(sl as ShuttleSlot[]);
       setLoading(false);
     })();
   }, [supabase, router]);
@@ -74,6 +72,7 @@ export default function ReservationApp() {
   // ── 載入某日:剩餘座位 + 我的預約 (+ admin 全部) ──
   const loadDay = useCallback(async (date: string, isAdmin: boolean, acct: string) => {
     const tasks: PromiseLike<unknown>[] = [
+      supabase.rpc('get_daily_slots', { p_date: date }),
       supabase.rpc('get_slot_availability', { p_date: date }),
       supabase.from('reservations')
         .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, cancellation_history, created_at')
@@ -87,12 +86,14 @@ export default function ReservationApp() {
       );
     }
     const results = await Promise.all(tasks);
-    const avail = (results[0] as { data: SlotAvailability[] | null }).data;
-    const mine = (results[1] as { data: Reservation | null }).data;
+    const daySlots = (results[0] as { data: ShuttleSlot[] | null }).data;
+    const avail = (results[1] as { data: SlotAvailability[] | null }).data;
+    const mine = (results[2] as { data: Reservation | null }).data;
+    setSlots(daySlots ?? []);
     setAvailability(avail ?? []);
     setMyRes(mine ?? null);
     if (isAdmin) {
-      const all = (results[2] as { data: Reservation[] | null }).data;
+      const all = (results[3] as { data: Reservation[] | null }).data;
       setAllRes(all ?? []);
     }
   }, [supabase]);
@@ -204,10 +205,9 @@ export default function ReservationApp() {
     ? [{ key: 'book', label: '預約' }, { key: 'schedule', label: '排班' }, { key: 'slots', label: '班次' }, { key: 'users', label: '使用者' }]
     : [{ key: 'book', label: '預約' }];
 
-  // 排班視角(admin 看每日乘客名單)可瀏覽任意日期 — 包含已過截止的明天、
-  // 甚至過去的紀錄;只有「預約」視角才受最早可約日(cutoff)限制。
+  // 預約 / 排班視角都可瀏覽過去日期以查看紀錄;是否可新增/取消
+  // 一律交給 open(RLS 同步規則)判斷。
   const inSchedule = view === 'schedule';
-  const atLowerBound = !inSchedule && currentDate <= minDate;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#e0f2f1] via-[#e8f5e9] to-[#b2ebf2] pb-20 md:pb-10 font-sans">
@@ -250,8 +250,8 @@ export default function ReservationApp() {
         {/* 日期選擇器(僅 book / schedule 視角需要) */}
         {(view === 'book' || view === 'schedule') && (
           <div className="bg-white rounded-2xl shadow-sm p-4 flex items-center justify-between">
-            <button onClick={() => !atLowerBound && setCurrentDate(addDays(currentDate, -1))} disabled={atLowerBound}
-              className="p-2 hover:bg-teal-50 rounded-full transition-colors text-teal-600 disabled:opacity-30 disabled:cursor-not-allowed">
+            <button onClick={() => setCurrentDate(addDays(currentDate, -1))}
+              className="p-2 hover:bg-teal-50 rounded-full transition-colors text-teal-600">
               <ChevronLeft className="w-6 h-6" />
             </button>
             <div className="text-center flex-1">
@@ -307,6 +307,14 @@ export default function ReservationApp() {
                     取消預約
                   </button>
                 )}
+              </div>
+            ) : !open ? (
+              <div className="bg-white rounded-[2rem] shadow-sm p-8 text-center border border-teal-100">
+                <div className="w-16 h-16 bg-teal-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <CalendarDays className="w-8 h-8 text-teal-500" />
+                </div>
+                <h3 className="text-lg font-bold text-teal-900 mb-2">此日沒有您的預約紀錄</h3>
+                <p className="text-gray-500 text-sm">{config.origin} → {config.destination}</p>
               </div>
             ) : (
               <div className="bg-white rounded-[2rem] shadow-sm p-6 sm:p-8 border border-teal-100">
@@ -422,9 +430,9 @@ export default function ReservationApp() {
 
         {/* ── 班次設定(admin) ── */}
         {view === 'slots' && me.isAdmin && (
-          <SlotManager slots={slots} cutoffHour={cutoffHour} onSaved={showToast}
+          <SlotManager key={currentDate} date={currentDate} slots={slots} cutoffHour={cutoffHour} onSaved={showToast}
             reload={async () => {
-              const { data: sl } = await supabase.from('shuttle_slots').select('*').eq('active', true).order('sort_order');
+              const { data: sl } = await supabase.rpc('get_daily_slots', { p_date: currentDate });
               if (sl) setSlots(sl as ShuttleSlot[]);
               const { data: cfg } = await supabase.from('shuttle_config').select('*').eq('id', 'default').single();
               if (cfg) setConfig(cfg as ShuttleConfig);

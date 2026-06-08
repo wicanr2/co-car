@@ -12,6 +12,7 @@ export interface Profile {
 
 // ── 班次(發車時段 + 座位上限)──
 export interface ShuttleSlot {
+  service_date?: string;   // 每日班次日期;未指定時為預設模板
   departure_time: string; // 'HH:MM:SS'(Postgres time)
   capacity: number;
   active?: boolean;

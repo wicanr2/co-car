@@ -7,6 +7,7 @@ import { fmtSlot } from '@/lib/date';
 import type { ShuttleSlot } from '@/types';
 
 interface Props {
+  date: string;
   slots: ShuttleSlot[];
   cutoffHour: number;
   onSaved: (msg: string, type?: 'success' | 'error') => void;
@@ -15,7 +16,7 @@ interface Props {
 
 // 班次設定(admin only):調整各班次座位上限 / 停駛、以及預約截止時數。
 // 寫入經 supabase client + RLS(is_admin claim 放行)。
-export default function SlotManager({ slots, cutoffHour, onSaved, reload }: Props) {
+export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }: Props) {
   const supabase = createClient();
   const [caps, setCaps] = useState<Record<string, number>>(
     Object.fromEntries(slots.map((s) => [s.departure_time, s.capacity])),
@@ -26,12 +27,19 @@ export default function SlotManager({ slots, cutoffHour, onSaved, reload }: Prop
   const [cutoff, setCutoff] = useState(cutoffHour);
 
   const saveSlot = async (t: string) => {
+    const slot = slots.find((s) => s.departure_time === t);
     const { error } = await supabase
-      .from('shuttle_slots')
-      .update({ capacity: caps[t], active: actives[t], updated_at: new Date().toISOString() })
-      .eq('departure_time', t);
+      .from('daily_shuttle_slots')
+      .upsert({
+        service_date: date,
+        departure_time: t,
+        capacity: caps[t],
+        active: actives[t],
+        sort_order: slot?.sort_order ?? 0,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'service_date,departure_time' });
     if (error) { onSaved('儲存失敗:' + error.message, 'error'); return; }
-    onSaved(`班次 ${fmtSlot(t)} 已更新`);
+    onSaved(`${date} 班次 ${fmtSlot(t)} 已更新`);
     reload();
   };
 
@@ -50,7 +58,7 @@ export default function SlotManager({ slots, cutoffHour, onSaved, reload }: Prop
       {/* 班次容量 */}
       <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
         <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
-          <Bus className="w-5 h-5 mr-2 text-teal-500" /> 班次與座位上限
+          <Bus className="w-5 h-5 mr-2 text-teal-500" /> {date} 班次與座位上限
         </h2>
         <div className="space-y-3">
           {slots.map((s) => (
