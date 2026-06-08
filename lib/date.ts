@@ -60,3 +60,31 @@ export function isReservationOpen(dateStr: string, cutoffHour = 17): boolean {
 export function fmtSlot(t: string): string {
   return t.slice(0, 5);
 }
+
+export type ReportMode = 'day' | 'week' | 'month';
+
+function localDate(dateStr: string): Date {
+  return new Date(`${dateStr}T00:00:00`);
+}
+
+export function reportRange(dateStr: string, mode: ReportMode): { from: string; to: string; label: string } {
+  const base = localDate(dateStr);
+  if (mode === 'day') return { from: dateStr, to: dateStr, label: dateStr };
+
+  if (mode === 'week') {
+    const start = new Date(base);
+    const day = start.getDay();
+    start.setDate(start.getDate() - (day === 0 ? 6 : day - 1));
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const from = formatDate(start);
+    const to = formatDate(end);
+    return { from, to, label: `${from}_${to}` };
+  }
+
+  const first = new Date(base.getFullYear(), base.getMonth(), 1);
+  const last = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  const from = formatDate(first);
+  const to = formatDate(last);
+  return { from, to, label: `${from.slice(0, 7)}` };
+}

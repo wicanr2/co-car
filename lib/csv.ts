@@ -1,28 +1,46 @@
 // CSV 匯出純函數 — 接駁車預約明細(可單元測試)
 
 export interface ReservationRow {
+  date?: string;
   empId: string;
   name: string;
   department?: string | null;
-  date: string;
   departure: string;   // 'HH:MM'
   returnNote?: string | null;
+  status?: 'active' | 'cancelled';
+  cancelledAt?: string | null;
+  cancelledBy?: string | null;
   createdAt?: string | null;
 }
 
 // 產生帶 UTF-8 BOM 的 CSV 字串(Excel 友善),欄位用雙引號包覆
 export function reservationsToCsv(rows: ReservationRow[]): string {
-  const headers = ['工號', '姓名', '部門', '去程日期', '發車班次', '回程備註', '預約時間'];
+  const includeDate = rows.some((r) => r.date);
+  const headers = [
+    ...(includeDate ? ['去程日期'] : []),
+    '工號',
+    '姓名',
+    '部門',
+    '發車班次',
+    '回程備註',
+    '狀態',
+    '預約時間',
+    '取消時間',
+    '取消者',
+  ];
   const body = [
     headers,
     ...rows.map((r) => [
+      ...(includeDate ? [r.date ?? ''] : []),
       r.empId,
       r.name,
       r.department ?? '',
-      r.date,
       r.departure,
       r.returnNote ?? '',
-      r.createdAt ? new Date(r.createdAt).toLocaleString('zh-TW', { hour12: false }) : '',
+      r.status === 'cancelled' ? '已取消' : '有效',
+      r.createdAt ? new Date(r.createdAt).toLocaleTimeString('zh-TW', { hour12: false }) : '',
+      r.cancelledAt ? new Date(r.cancelledAt).toLocaleString('zh-TW', { hour12: false }) : '',
+      r.cancelledBy ?? '',
     ]),
   ]
     .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))

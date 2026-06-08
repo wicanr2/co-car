@@ -4,11 +4,11 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Bus, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, Users,
-  UserCircle, LogOut, Lock, Download, CalendarDays, Armchair,
+  UserCircle, LogOut, Lock, Download, CalendarDays, Armchair, XCircle,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { decodeClaims } from '@/lib/jwt';
-import { addDays, minBookableDate, isReservationOpen, fmtSlot, today } from '@/lib/date';
+import { addDays, minBookableDate, isReservationOpen, fmtSlot, today, reportRange, type ReportMode } from '@/lib/date';
 import { reservationsToCsv, downloadCsv } from '@/lib/csv';
 import RouteMap from '@/components/RouteMap';
 import SlotManager from '@/components/SlotManager';
@@ -32,6 +32,7 @@ export default function ReservationApp() {
   const [availability, setAvailability] = useState<SlotAvailability[]>([]);
   const [myRes, setMyRes] = useState<Reservation | null>(null);
   const [allRes, setAllRes] = useState<Reservation[]>([]);
+  const [reportMode, setReportMode] = useState<ReportMode>('day');
 
   const [selectedSlot, setSelectedSlot] = useState<string>('');
   const [returnNote, setReturnNote] = useState('');
@@ -74,12 +75,14 @@ export default function ReservationApp() {
   const loadDay = useCallback(async (date: string, isAdmin: boolean, acct: string) => {
     const tasks: PromiseLike<unknown>[] = [
       supabase.rpc('get_slot_availability', { p_date: date }),
-      supabase.from('reservations').select('account_id, emp_id, emp_name, date, departure_time, return_note, created_at').eq('account_id', acct).eq('date', date).maybeSingle(),
+      supabase.from('reservations')
+        .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, cancellation_history, created_at')
+        .eq('account_id', acct).eq('date', date).eq('status', 'active').maybeSingle(),
     ];
     if (isAdmin) {
       tasks.push(
         supabase.from('reservations')
-          .select('account_id, emp_id, emp_name, date, departure_time, return_note, created_at, profiles(name, department)')
+          .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, created_at, profiles(name, department)')
           .eq('date', date).order('departure_time'),
       );
     }
@@ -114,14 +117,17 @@ export default function ReservationApp() {
   useEffect(() => { setSelectedSlot(''); setReturnNote(''); }, [currentDate]);
 
   const seatsLeftOf = (t: string) => availability.find((a) => a.departure_time === t)?.seats_left ?? null;
+  const activeRes = useMemo(() => allRes.filter((r) => (r.status ?? 'active') === 'active'), [allRes]);
 
   // ── 員工:送出 / 取消 ──
   const submit = async () => {
     if (!me || !selectedSlot) { showToast('請選擇發車班次', 'error'); return; }
-    const { error } = await supabase.from('reservations').upsert({
+    const { error } = await supabase.from('reservations').insert({
       account_id: me.acct, emp_id: me.empId, emp_name: me.name,
       date: currentDate, departure_time: selectedSlot,
-      return_note: returnNote.trim() || null, updated_at: new Date().toISOString(),
+      return_note: returnNote.trim() || null,
+      status: 'active', cancelled_at: null, cancelled_by: null, cancelled_reason: null,
+      updated_at: new Date().toISOString(),
     });
     if (error) {
       const m = error.message.includes('額滿') ? '該班次已額滿' :
@@ -133,20 +139,53 @@ export default function ReservationApp() {
   };
 
   const cancel = async () => {
-    if (!me) return;
-    const { error } = await supabase.from('reservations').delete().match({ account_id: me.acct, date: currentDate });
+    if (!me || !myRes?.id) return;
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('reservations').update({
+      status: 'cancelled',
+      cancelled_at: now,
+      cancelled_by: me.acct,
+      cancellation_history: [...(myRes.cancellation_history ?? []), { at: now, by: me.acct }],
+      updated_at: now,
+    }).eq('id', myRes.id);
     if (error) { showToast(/policy|row-level/i.test(error.message) ? '已過截止時間,無法取消' : '取消失敗', 'error'); return; }
     showToast('已取消預約');
     loadDay(currentDate, me.isAdmin, me.acct);
   };
 
-  const exportCsv = () => {
-    if (allRes.length === 0) { showToast('這天還沒有人預約', 'error'); return; }
-    const csv = reservationsToCsv(allRes.map((r) => ({
+  const cancelAsAdmin = async (reservation: Reservation) => {
+    const res = await fetch('/api/admin/reservations/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reservationId: reservation.id, accountId: reservation.account_id, date: reservation.date }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(json.error ?? '取消失敗', 'error'); return; }
+    showToast('已取消預約');
+    loadDay(currentDate, me?.isAdmin ?? false, me?.acct ?? '');
+  };
+
+  const exportCsv = async () => {
+    const range = reportRange(currentDate, reportMode);
+    const { data, error } = await supabase
+      .from('reservations')
+      .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, created_at, profiles(name, department)')
+      .gte('date', range.from)
+      .lte('date', range.to)
+      .order('date', { ascending: true })
+      .order('departure_time', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) { showToast('報表匯出失敗', 'error'); return; }
+    const reportRows = (data as unknown as Reservation[]) ?? [];
+    if (reportRows.length === 0) { showToast('目前沒有預約可匯出', 'error'); return; }
+    const csv = reservationsToCsv(reportRows.map((r) => ({
       empId: r.emp_id, name: r.profiles?.name ?? r.emp_name ?? r.emp_id, department: r.profiles?.department,
-      date: r.date, departure: fmtSlot(r.departure_time), returnNote: r.return_note, createdAt: r.created_at,
+      date: reportMode === 'day' ? undefined : r.date,
+      departure: fmtSlot(r.departure_time), returnNote: r.return_note,
+      status: r.status ?? 'active', cancelledAt: r.cancelled_at, cancelledBy: r.cancelled_by, createdAt: r.created_at,
     })));
-    downloadCsv(`接駁預約_${currentDate}.csv`, csv);
+    const label = reportMode === 'day' ? currentDate : range.label;
+    downloadCsv(`接駁預約${reportMode === 'day' ? '每日' : reportMode === 'week' ? '每週' : '每月'}報表_${label}.csv`, csv);
     showToast('CSV 匯出成功!');
   };
 
@@ -319,20 +358,29 @@ export default function ReservationApp() {
         {/* ── 排班視角(admin) ── */}
         {view === 'schedule' && me.isAdmin && (
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
-            <div className="flex justify-between items-center mb-5">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-5">
               <h2 className="text-lg font-bold text-gray-800 flex items-center">
                 <Users className="w-5 h-5 mr-2 text-teal-500" /> 當日乘客名單
               </h2>
-              {allRes.length > 0 && (
+              <div className="flex items-center gap-2">
+                <select
+                  value={reportMode}
+                  onChange={(e) => setReportMode(e.target.value as ReportMode)}
+                  className="text-sm bg-white border border-teal-200 text-teal-800 px-3 py-1.5 rounded-lg font-medium outline-none"
+                >
+                  <option value="day">每日</option>
+                  <option value="week">每週</option>
+                  <option value="month">每月</option>
+                </select>
                 <button onClick={exportCsv}
                   className="flex items-center text-sm bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg font-medium border border-teal-200 transition-colors">
-                  <Download className="w-4 h-4 mr-1" /> 匯出 CSV
+                  <Download className="w-4 h-4 mr-1" /> 匯出報表
                 </button>
-              )}
+              </div>
             </div>
 
             {slots.map((s) => {
-              const list = allRes.filter((r) => r.departure_time === s.departure_time);
+              const list = activeRes.filter((r) => r.departure_time === s.departure_time);
               return (
                 <div key={s.departure_time} className="mb-5 last:mb-0">
                   <div className="flex items-center justify-between bg-teal-50 rounded-t-xl px-4 py-2.5">
@@ -352,6 +400,15 @@ export default function ReservationApp() {
                             <td className="px-2 py-2 font-medium text-gray-800">{r.profiles?.name ?? r.emp_name ?? '—'}</td>
                             <td className="px-2 py-2 text-gray-400">{r.profiles?.department ?? ''}</td>
                             <td className="px-4 py-2 text-gray-500 text-right">{r.return_note ?? ''}</td>
+                            <td className="px-4 py-2 text-right w-20">
+                              <button
+                                onClick={() => cancelAsAdmin(r)}
+                                className="inline-flex items-center justify-center text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg font-medium transition-colors"
+                                title="取消預約"
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

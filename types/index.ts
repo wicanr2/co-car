@@ -30,15 +30,27 @@ export interface ShuttleConfig {
 
 // ── 預約 ──
 export interface Reservation {
+  id?: string;
   account_id: string;      // = 工號|姓名,擁有鍵
   emp_id: string;          // 工號(顯示快照)
   emp_name?: string | null; // 姓名(顯示快照)
   date: string;            // 'YYYY-MM-DD'
   departure_time: string;  // 'HH:MM:SS'
   return_note?: string | null;
+  status?: 'active' | 'cancelled';
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancelled_reason?: string | null;
+  cancellation_history?: ReservationCancellation[];
   created_at?: string | null;
   // 內嵌 profile(admin 排班視角用)
   profiles?: { name: string; department?: string | null } | null;
+}
+
+export interface ReservationCancellation {
+  at: string;
+  by: string;
+  reason?: string | null;
 }
 
 // ── 班次可用座位(get_slot_availability RPC 回傳)──

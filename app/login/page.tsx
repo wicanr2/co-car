@@ -6,8 +6,6 @@ import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [empId, setEmpId] = useState('');
-  const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -16,14 +14,17 @@ export default function LoginPage() {
   // 取回該帳號的不可變 email,再進行登入。
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!empId.trim() || !name.trim()) return;
+    const form = new FormData(e.currentTarget as HTMLFormElement);
+    const empId = String(form.get('empId') ?? '').trim();
+    const name = String(form.get('name') ?? '').trim();
+    if (!empId || !name || loading) return;
     setLoading(true);
     setError('');
 
     const ensure = await fetch('/api/auth/ensure', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ empId: empId.trim(), name: name.trim() }),
+      body: JSON.stringify({ empId, name }),
     });
     const ej = await ensure.json().catch(() => ({}));
     if (!ensure.ok || !ej.email) {
@@ -35,7 +36,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({
       email: ej.email,
-      password: name.trim(),
+      password: name,
     });
     if (error) {
       setError('工號或姓名錯誤');
@@ -68,7 +69,7 @@ export default function LoginPage() {
           <div>
             <label className="block text-sm font-bold text-teal-800 mb-2 ml-1">工號</label>
             <input
-              type="text" value={empId} onChange={(e) => setEmpId(e.target.value)} autoFocus
+              name="empId" type="text" autoFocus
               className="w-full px-5 py-3.5 bg-teal-50/50 border-2 border-teal-100 rounded-2xl focus:ring-0 focus:border-teal-400 outline-none transition text-teal-900 placeholder-teal-300 font-medium"
               placeholder="請輸入您的工號(例:A200112)"
               required
@@ -77,7 +78,7 @@ export default function LoginPage() {
           <div>
             <label className="block text-sm font-bold text-teal-800 mb-2 ml-1">中文姓名</label>
             <input
-              type="text" value={name} onChange={(e) => setName(e.target.value)}
+              name="name" type="text"
               className="w-full px-5 py-3.5 bg-teal-50/50 border-2 border-teal-100 rounded-2xl focus:ring-0 focus:border-teal-400 outline-none transition text-teal-900 placeholder-teal-300 font-medium"
               placeholder="請輸入您的姓名"
               required
@@ -89,7 +90,7 @@ export default function LoginPage() {
           <div className="pt-2">
             <button
               type="submit"
-              disabled={!empId.trim() || !name.trim() || loading}
+              disabled={loading}
               className="w-full bg-gradient-to-r from-teal-400 to-emerald-500 hover:from-teal-500 hover:to-emerald-600 text-white font-bold py-4 px-4 rounded-2xl shadow-lg shadow-teal-500/30 transform transition active:scale-95 focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {loading ? '登入中…' : '登入預約系統'}
