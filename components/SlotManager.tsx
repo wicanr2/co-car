@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Bus, Save, Clock, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { fmtSlot } from '@/lib/date';
+import { fmtSlot, isReservationOpen } from '@/lib/date';
 import type { ShuttleSlot } from '@/types';
 
 interface Props {
@@ -30,6 +30,7 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
   const [cutoff, setCutoff] = useState(cutoffHour);
   const [newTime, setNewTime] = useState('');
   const [newCapacity, setNewCapacity] = useState(5);
+  const locked = !isReservationOpen(date, cutoffHour);
 
   const toPgTime = (hhmm: string) => {
     const trimmed = hhmm.trim();
@@ -37,6 +38,7 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
   };
 
   const saveSlot = async (t: string) => {
+    if (locked) { onSaved('此日期已成為歷史紀錄,不可變動', 'error'); return; }
     const slot = slots.find((s) => s.departure_time === t);
     const departureTime = toPgTime(times[t] ?? fmtSlot(t));
     if (!/^\d{2}:\d{2}:00$/.test(departureTime)) {
@@ -80,6 +82,7 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
   };
 
   const addSlot = async () => {
+    if (locked) { onSaved('此日期已成為歷史紀錄,不可變動', 'error'); return; }
     const departureTime = toPgTime(newTime);
     if (!/^\d{2}:\d{2}:00$/.test(departureTime)) {
       onSaved('請輸入有效班次時間', 'error');
@@ -119,6 +122,11 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
         <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
           <Bus className="w-5 h-5 mr-2 text-teal-500" /> {date} 班次與座位上限
         </h2>
+        {locked && (
+          <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            此日期已成為歷史紀錄,班次時間、座位與停駛狀態不可變動。
+          </div>
+        )}
         <div className="space-y-3">
           {slots.map((s) => (
             <div key={s.departure_time} className="flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-3 flex-wrap">
@@ -126,7 +134,8 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
                 type="time"
                 value={times[s.departure_time] ?? fmtSlot(s.departure_time)}
                 onChange={(e) => setTimes({ ...times, [s.departure_time]: e.target.value })}
-                className="w-28 px-2 py-1.5 border border-gray-300 rounded-lg text-sm font-mono font-bold text-teal-700 focus:ring-2 focus:ring-teal-500 outline-none"
+                disabled={locked}
+                className="w-28 px-2 py-1.5 border border-gray-300 rounded-lg text-sm font-mono font-bold text-teal-700 focus:ring-2 focus:ring-teal-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
               />
               <div className="flex items-center gap-1.5">
                 <label className="text-sm text-gray-500">座位</label>
@@ -134,7 +143,8 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
                   type="number" min={0} max={99}
                   value={caps[s.departure_time]}
                   onChange={(e) => setCaps({ ...caps, [s.departure_time]: Number(e.target.value) })}
-                  className="w-16 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-teal-500 outline-none"
+                  disabled={locked}
+                  className="w-16 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-teal-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
               <label className="flex items-center text-sm text-gray-600 gap-1.5 ml-2">
@@ -142,13 +152,15 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
                   type="checkbox"
                   checked={actives[s.departure_time]}
                   onChange={(e) => setActives({ ...actives, [s.departure_time]: e.target.checked })}
-                  className="w-4 h-4 accent-teal-600"
+                  disabled={locked}
+                  className="w-4 h-4 accent-teal-600 disabled:opacity-50"
                 />
                 發車
               </label>
               <button
                 onClick={() => saveSlot(s.departure_time)}
-                className="sm:ml-auto flex items-center gap-1 text-sm bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg font-medium border border-teal-200 transition-colors"
+                disabled={locked}
+                className="sm:ml-auto flex items-center gap-1 text-sm bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg font-medium border border-teal-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save className="w-4 h-4" /> 儲存
               </button>
@@ -160,7 +172,8 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
             type="time"
             value={newTime}
             onChange={(e) => setNewTime(e.target.value)}
-            className="w-28 px-2 py-1.5 border border-teal-200 rounded-lg text-sm font-mono font-bold text-teal-700 focus:ring-2 focus:ring-teal-500 outline-none"
+            disabled={locked}
+            className="w-28 px-2 py-1.5 border border-teal-200 rounded-lg text-sm font-mono font-bold text-teal-700 focus:ring-2 focus:ring-teal-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
           />
           <div className="flex items-center gap-1.5">
             <label className="text-sm text-gray-500">座位</label>
@@ -168,12 +181,14 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
               type="number" min={0} max={99}
               value={newCapacity}
               onChange={(e) => setNewCapacity(Number(e.target.value))}
-              className="w-16 px-2 py-1.5 border border-teal-200 rounded-lg text-sm text-center focus:ring-2 focus:ring-teal-500 outline-none"
+              disabled={locked}
+              className="w-16 px-2 py-1.5 border border-teal-200 rounded-lg text-sm text-center focus:ring-2 focus:ring-teal-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
             />
           </div>
           <button
             onClick={addSlot}
-            className="sm:ml-auto flex items-center gap-1 text-sm bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+            disabled={locked}
+            className="sm:ml-auto flex items-center gap-1 text-sm bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" /> 新增班次
           </button>

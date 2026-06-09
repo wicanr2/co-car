@@ -13,7 +13,7 @@ import { reservationsToCsv, downloadCsv } from '@/lib/csv';
 import RouteMap from '@/components/RouteMap';
 import SlotManager from '@/components/SlotManager';
 import UserManager from '@/components/UserManager';
-import type { ShuttleSlot, ShuttleConfig, Reservation, SlotAvailability } from '@/types';
+import type { ShuttleSlot, ShuttleConfig, Reservation, SlotAvailability, ReservationCancellation } from '@/types';
 
 interface Me { acct: string; empId: string; name: string; isAdmin: boolean }
 type View = 'book' | 'schedule' | 'slots' | 'users';
@@ -31,6 +31,7 @@ export default function ReservationApp() {
 
   const [availability, setAvailability] = useState<SlotAvailability[]>([]);
   const [myRes, setMyRes] = useState<Reservation | null>(null);
+  const [myRecords, setMyRecords] = useState<Reservation[]>([]);
   const [allRes, setAllRes] = useState<Reservation[]>([]);
   const [reportMode, setReportMode] = useState<ReportMode>('day');
 
@@ -77,23 +78,31 @@ export default function ReservationApp() {
       supabase.from('reservations')
         .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, cancellation_history, created_at')
         .eq('account_id', acct).eq('date', date).eq('status', 'active').maybeSingle(),
+      supabase.from('reservations')
+        .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, cancellation_history, created_at')
+        .eq('account_id', acct).eq('date', date)
+        .order('created_at', { ascending: false }),
     ];
     if (isAdmin) {
       tasks.push(
         supabase.from('reservations')
-          .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, created_at, profiles(name, department)')
-          .eq('date', date).order('departure_time'),
+          .select('id, account_id, emp_id, emp_name, date, departure_time, return_note, status, cancelled_at, cancelled_by, cancellation_history, created_at, profiles(name, department)')
+          .eq('date', date)
+          .order('departure_time', { ascending: true })
+          .order('created_at', { ascending: true }),
       );
     }
     const results = await Promise.all(tasks);
     const daySlots = (results[0] as { data: ShuttleSlot[] | null }).data;
     const avail = (results[1] as { data: SlotAvailability[] | null }).data;
     const mine = (results[2] as { data: Reservation | null }).data;
+    const records = (results[3] as { data: Reservation[] | null }).data;
     setSlots(daySlots ?? []);
     setAvailability(avail ?? []);
     setMyRes(mine ?? null);
+    setMyRecords(records ?? []);
     if (isAdmin) {
-      const all = (results[3] as { data: Reservation[] | null }).data;
+      const all = (results[4] as { data: Reservation[] | null }).data;
       setAllRes(all ?? []);
     }
   }, [supabase]);
@@ -120,6 +129,22 @@ export default function ReservationApp() {
   const seatsLeftOf = (t: string) => availability.find((a) => a.departure_time === t)?.seats_left ?? null;
   const activeRes = useMemo(() => allRes.filter((r) => (r.status ?? 'active') === 'active'), [allRes]);
   const bookableSlots = useMemo(() => slots.filter((s) => s.active ?? true), [slots]);
+
+  const statusText = (status?: Reservation['status']) => status === 'cancelled' ? '已取消' : '有效';
+  const statusClass = (status?: Reservation['status']) =>
+    status === 'cancelled' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100';
+  const formatDateTime = (value?: string | null) =>
+    value ? new Date(value).toLocaleString('zh-TW', { hour12: false }) : '—';
+  const cancellationLabel = (history?: ReservationCancellation[]) => {
+    const last = Array.isArray(history) ? history.at(-1) : null;
+    return last ? `${formatDateTime(last.at)} / ${last.by}` : null;
+  };
+  const cancellationInfo = (r: Reservation) => {
+    if (r.cancelled_at || r.cancelled_by) {
+      return `${formatDateTime(r.cancelled_at)} / ${r.cancelled_by ?? '—'}`;
+    }
+    return cancellationLabel(r.cancellation_history) ?? '—';
+  };
 
   // ── 員工:送出 / 取消 ──
   const submit = async () => {
@@ -281,16 +306,44 @@ export default function ReservationApp() {
         {/* ── 預約視角 ── */}
         {view === 'book' && (
           <div className="space-y-6">
-            {/* 內嵌路線小地圖(直接顯示,不需跳頁) */}
-            <RouteMap
-              origin={config.origin ?? '新竹力行路'}
-              destination={config.destination ?? '竹南國泰路'}
-              mapUrl={config.map_url ?? '#'}
-            />
-
             {!open && (
               <div className="flex items-center bg-amber-50 text-amber-700 px-4 py-3 rounded-xl text-sm border border-amber-100">
                 <Lock className="w-4 h-4 mr-2" /> 此日已過預約截止(前一天 {String(cutoffHour).padStart(2, '0')}:00),無法新增 / 取消
+              </div>
+            )}
+
+            {myRecords.length > 0 && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+                  <h3 className="font-bold text-gray-800">本日紀錄</h3>
+                  <span className="text-xs text-gray-500">預約與取消的最後狀態</span>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {myRecords.map((r) => (
+                    <div key={r.id ?? `${r.account_id}-${r.created_at}`} className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-lg font-bold text-teal-800">{fmtSlot(r.departure_time)}</span>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${statusClass(r.status)}`}>
+                            {statusText(r.status)}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1">預約時間:{formatDateTime(r.created_at)}</p>
+                        {r.return_note && <p className="text-sm text-gray-500 mt-1">回程備註:{r.return_note}</p>}
+                      </div>
+                      <div className="text-sm text-gray-500 sm:text-right">
+                        {r.status === 'cancelled' ? (
+                          <>
+                            <p>取消時間:{formatDateTime(r.cancelled_at)}</p>
+                            <p>取消者:{r.cancelled_by ?? '—'}</p>
+                          </>
+                        ) : (
+                          <p className="text-emerald-700 font-medium">目前有效</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -314,7 +367,9 @@ export default function ReservationApp() {
                 <div className="w-16 h-16 bg-teal-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                   <CalendarDays className="w-8 h-8 text-teal-500" />
                 </div>
-                <h3 className="text-lg font-bold text-teal-900 mb-2">此日沒有您的預約紀錄</h3>
+                <h3 className="text-lg font-bold text-teal-900 mb-2">
+                  {myRecords.length > 0 ? '此日目前沒有有效預約' : '此日沒有您的預約紀錄'}
+                </h3>
                 <p className="text-gray-500 text-sm">{config.origin} → {config.destination}</p>
               </div>
             ) : (
@@ -361,6 +416,12 @@ export default function ReservationApp() {
                 </button>
               </div>
             )}
+
+            <RouteMap
+              origin={config.origin ?? '新竹力行路'}
+              destination={config.destination ?? '竹南國泰路'}
+              mapUrl={config.map_url ?? '#'}
+            />
           </div>
         )}
 
@@ -388,6 +449,12 @@ export default function ReservationApp() {
               </div>
             </div>
 
+            {!open && (
+              <div className="mb-5 flex items-center bg-amber-50 text-amber-700 px-4 py-3 rounded-xl text-sm border border-amber-100">
+                <Lock className="w-4 h-4 mr-2" /> 此日期已成為歷史紀錄,排班資料只能查看,不能取消或變動。
+              </div>
+            )}
+
             {slots.map((s) => {
               const list = activeRes.filter((r) => r.departure_time === s.departure_time);
               return (
@@ -404,19 +471,23 @@ export default function ReservationApp() {
                     <table className="w-full text-sm border border-t-0 border-gray-100 rounded-b-xl overflow-hidden">
                       <tbody>
                         {list.map((r) => (
-                          <tr key={r.account_id} className="border-b border-gray-50 last:border-0">
+                          <tr key={r.id ?? r.account_id} className="border-b border-gray-50 last:border-0">
                             <td className="px-4 py-2 font-medium text-gray-500 w-24">{r.emp_id}</td>
                             <td className="px-2 py-2 font-medium text-gray-800">{r.profiles?.name ?? r.emp_name ?? '—'}</td>
                             <td className="px-2 py-2 text-gray-400">{r.profiles?.department ?? ''}</td>
                             <td className="px-4 py-2 text-gray-500 text-right">{r.return_note ?? ''}</td>
                             <td className="px-4 py-2 text-right w-20">
-                              <button
-                                onClick={() => cancelAsAdmin(r)}
-                                className="inline-flex items-center justify-center text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg font-medium transition-colors"
-                                title="取消預約"
-                              >
-                                <XCircle className="w-4 h-4" />
-                              </button>
+                              {open ? (
+                                <button
+                                  onClick={() => cancelAsAdmin(r)}
+                                  className="inline-flex items-center justify-center text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg font-medium transition-colors"
+                                  title="取消預約"
+                                >
+                                  <XCircle className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-400">鎖定</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -426,6 +497,51 @@ export default function ReservationApp() {
                 </div>
               );
             })}
+
+            <div className="mt-8 border-t border-gray-100 pt-5">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h3 className="font-bold text-gray-800">當日紀錄</h3>
+                <span className="text-xs text-gray-500">包含有效與已取消</span>
+              </div>
+              {allRes.length === 0 ? (
+                <p className="text-gray-400 text-sm px-4 py-3 border border-gray-100 rounded-xl">尚無紀錄</p>
+              ) : (
+                <div className="overflow-x-auto border border-gray-100 rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-gray-500">
+                      <tr>
+                        <th className="px-4 py-2 text-left font-medium">狀態</th>
+                        <th className="px-4 py-2 text-left font-medium">工號</th>
+                        <th className="px-4 py-2 text-left font-medium">姓名</th>
+                        <th className="px-4 py-2 text-left font-medium">班次</th>
+                        <th className="px-4 py-2 text-left font-medium">預約時間</th>
+                        <th className="px-4 py-2 text-left font-medium">取消資訊</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allRes.map((r) => (
+                        <tr key={r.id ?? `${r.account_id}-${r.created_at}`} className="border-t border-gray-50">
+                          <td className="px-4 py-2">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${statusClass(r.status)}`}>
+                              {statusText(r.status)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-gray-500">{r.emp_id}</td>
+                          <td className="px-4 py-2 font-medium text-gray-800 whitespace-nowrap">{r.profiles?.name ?? r.emp_name ?? '—'}</td>
+                          <td className="px-4 py-2 font-mono text-teal-800">{fmtSlot(r.departure_time)}</td>
+                          <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{formatDateTime(r.created_at)}</td>
+                          <td className="px-4 py-2 text-gray-500 whitespace-nowrap">
+                            {r.status === 'cancelled'
+                              ? cancellationInfo(r)
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

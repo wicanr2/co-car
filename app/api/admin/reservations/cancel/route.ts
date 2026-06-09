@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decodeClaims } from '@/lib/jwt';
+import { isReservationOpen } from '@/lib/date';
 
 async function getAdminAcct(): Promise<string | null> {
   const supabase = await createClient();
@@ -30,16 +31,26 @@ export async function POST(req: Request) {
   const admin = createAdminClient();
   let q = admin
     .from('reservations')
-    .select('cancellation_history')
+    .select('cancellation_history, date')
+    .eq('status', 'active')
     .limit(1);
   q = reservationId
     ? q.eq('id', reservationId)
-    : q.eq('account_id', accountId).eq('date', date).eq('status', 'active');
+    : q.eq('account_id', accountId).eq('date', date);
 
   const { data: rows, error: readError } = await q;
   if (readError) return NextResponse.json({ error: readError.message }, { status: 400 });
   const current = rows?.[0];
   if (!current) return NextResponse.json({ error: '找不到有效預約' }, { status: 404 });
+
+  const { data: cfg } = await admin
+    .from('shuttle_config')
+    .select('cutoff_hour')
+    .eq('id', 'default')
+    .maybeSingle();
+  if (!isReservationOpen(current.date, cfg?.cutoff_hour ?? 17)) {
+    return NextResponse.json({ error: '此日期已成為歷史紀錄,不可變動' }, { status: 400 });
+  }
 
   const now = new Date().toISOString();
   const reason = body.reason ? String(body.reason).trim() : null;

@@ -16,8 +16,6 @@ loadEnv(new URL('../.env.local', import.meta.url).pathname);
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const PASSWORD = process.env.SEED_PASSWORD || 'test1234';
-
 if (!URL_ || !SERVICE) {
   console.error('缺 NEXT_PUBLIC_SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY');
   process.exit(1);
@@ -25,27 +23,50 @@ if (!URL_ || !SERVICE) {
 
 const admin = createClient(URL_, SERVICE, { auth: { persistSession: false } });
 
+async function findAuthUser(email) {
+  const { data } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  return data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase()) ?? null;
+}
+
 // 取出所有 profile 的 email
 const { data: profiles, error } = await admin
   .from('profiles')
   .select('emp_id, email, name');
 if (error) { console.error('讀 profiles 失敗:', error.message); process.exit(1); }
 
-let created = 0, skipped = 0;
+let created = 0, updated = 0, skipped = 0;
 for (const p of profiles) {
-  if (!p.email) continue;
+  if (!p.email || !p.name) continue;
   const { error: e } = await admin.auth.admin.createUser({
     email: p.email,
-    password: PASSWORD,
+    password: p.name,
     email_confirm: true,
     user_metadata: { emp_id: p.emp_id, name: p.name },
   });
   if (e) {
-    if (/already|exist|registered/i.test(e.message)) { skipped++; }
-    else { console.error(`建立 ${p.email} 失敗:`, e.message); }
+    if (/already|exist|registered/i.test(e.message)) {
+      const user = await findAuthUser(p.email);
+      if (!user) {
+        skipped++;
+        console.error(`找不到已存在帳號: ${p.email}`);
+        continue;
+      }
+      const { error: ue } = await admin.auth.admin.updateUserById(user.id, {
+        password: p.name,
+        email_confirm: true,
+        user_metadata: { ...user.user_metadata, emp_id: p.emp_id, name: p.name },
+      });
+      if (ue) {
+        skipped++;
+        console.error(`同步 ${p.email} 失敗:`, ue.message);
+      } else {
+        updated++;
+        console.log(`同步 auth user: ${p.email} (${p.emp_id} ${p.name})`);
+      }
+    } else { console.error(`建立 ${p.email} 失敗:`, e.message); }
   } else {
     created++;
     console.log(`建立 auth user: ${p.email} (${p.emp_id})`);
   }
 }
-console.log(`\n完成:新建 ${created}、已存在略過 ${skipped}。統一密碼:${PASSWORD}`);
+console.log(`\n完成:新建 ${created}、同步 ${updated}、略過 ${skipped}。登入憑證:各使用者中文姓名`);
