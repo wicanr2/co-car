@@ -119,6 +119,7 @@ export default function ReservationApp() {
 
   const seatsLeftOf = (t: string) => availability.find((a) => a.departure_time === t)?.seats_left ?? null;
   const activeRes = useMemo(() => allRes.filter((r) => (r.status ?? 'active') === 'active'), [allRes]);
+  const bookableSlots = useMemo(() => slots.filter((s) => s.active ?? true), [slots]);
 
   // ── 員工:送出 / 取消 ──
   const submit = async () => {
@@ -324,7 +325,7 @@ export default function ReservationApp() {
                 <p className="text-gray-400 text-sm mb-5">{config.origin} → {config.destination}</p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-                  {slots.map((s) => {
+                  {bookableSlots.map((s) => {
                     const left = seatsLeftOf(s.departure_time);
                     const full = left !== null && left <= 0;
                     const picked = selectedSlot === s.departure_time;

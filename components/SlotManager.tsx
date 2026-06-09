@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bus, Save, Clock } from 'lucide-react';
+import { Bus, Save, Clock, Plus } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { fmtSlot } from '@/lib/date';
 import type { ShuttleSlot } from '@/types';
@@ -18,6 +18,9 @@ interface Props {
 // 寫入經 supabase client + RLS(is_admin claim 放行)。
 export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }: Props) {
   const supabase = createClient();
+  const [times, setTimes] = useState<Record<string, string>>(
+    Object.fromEntries(slots.map((s) => [s.departure_time, fmtSlot(s.departure_time)])),
+  );
   const [caps, setCaps] = useState<Record<string, number>>(
     Object.fromEntries(slots.map((s) => [s.departure_time, s.capacity])),
   );
@@ -25,21 +28,77 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
     Object.fromEntries(slots.map((s) => [s.departure_time, s.active ?? true])),
   );
   const [cutoff, setCutoff] = useState(cutoffHour);
+  const [newTime, setNewTime] = useState('');
+  const [newCapacity, setNewCapacity] = useState(5);
+
+  const toPgTime = (hhmm: string) => {
+    const trimmed = hhmm.trim();
+    return /^\d{2}:\d{2}$/.test(trimmed) ? `${trimmed}:00` : trimmed;
+  };
 
   const saveSlot = async (t: string) => {
     const slot = slots.find((s) => s.departure_time === t);
+    const departureTime = toPgTime(times[t] ?? fmtSlot(t));
+    if (!/^\d{2}:\d{2}:00$/.test(departureTime)) {
+      onSaved('請輸入有效班次時間', 'error');
+      return;
+    }
+    if (departureTime !== t) {
+      const { count, error: countError } = await supabase
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('date', date)
+        .eq('departure_time', t)
+        .eq('status', 'active');
+      if (countError) { onSaved('檢查預約失敗:' + countError.message, 'error'); return; }
+      if ((count ?? 0) > 0) {
+        onSaved('已有預約的班次不能直接改時間', 'error');
+        return;
+      }
+    }
     const { error } = await supabase
       .from('daily_shuttle_slots')
       .upsert({
         service_date: date,
-        departure_time: t,
+        departure_time: departureTime,
         capacity: caps[t],
         active: actives[t],
         sort_order: slot?.sort_order ?? 0,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'service_date,departure_time' });
     if (error) { onSaved('儲存失敗:' + error.message, 'error'); return; }
-    onSaved(`${date} 班次 ${fmtSlot(t)} 已更新`);
+    if (departureTime !== t) {
+      const { error: deleteError } = await supabase
+        .from('daily_shuttle_slots')
+        .delete()
+        .eq('service_date', date)
+        .eq('departure_time', t);
+      if (deleteError) { onSaved('移除舊班次失敗:' + deleteError.message, 'error'); return; }
+    }
+    onSaved(`${date} 班次 ${fmtSlot(departureTime)} 已更新`);
+    reload();
+  };
+
+  const addSlot = async () => {
+    const departureTime = toPgTime(newTime);
+    if (!/^\d{2}:\d{2}:00$/.test(departureTime)) {
+      onSaved('請輸入有效班次時間', 'error');
+      return;
+    }
+    const { error } = await supabase
+      .from('daily_shuttle_slots')
+      .upsert({
+        service_date: date,
+        departure_time: departureTime,
+        capacity: newCapacity,
+        active: true,
+        sort_order: slots.length + 1,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'service_date,departure_time' });
+    if (error) { onSaved('新增失敗:' + error.message, 'error'); return; }
+    setNewTime('');
+    setNewCapacity(5);
+    onSaved(`${date} 班次 ${fmtSlot(departureTime)} 已新增`);
     reload();
   };
 
@@ -62,8 +121,13 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
         </h2>
         <div className="space-y-3">
           {slots.map((s) => (
-            <div key={s.departure_time} className="flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-3">
-              <span className="font-mono font-bold text-teal-700 text-lg w-16">{fmtSlot(s.departure_time)}</span>
+            <div key={s.departure_time} className="flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-3 flex-wrap">
+              <input
+                type="time"
+                value={times[s.departure_time] ?? fmtSlot(s.departure_time)}
+                onChange={(e) => setTimes({ ...times, [s.departure_time]: e.target.value })}
+                className="w-28 px-2 py-1.5 border border-gray-300 rounded-lg text-sm font-mono font-bold text-teal-700 focus:ring-2 focus:ring-teal-500 outline-none"
+              />
               <div className="flex items-center gap-1.5">
                 <label className="text-sm text-gray-500">座位</label>
                 <input
@@ -84,12 +148,35 @@ export default function SlotManager({ date, slots, cutoffHour, onSaved, reload }
               </label>
               <button
                 onClick={() => saveSlot(s.departure_time)}
-                className="ml-auto flex items-center gap-1 text-sm bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg font-medium border border-teal-200 transition-colors"
+                className="sm:ml-auto flex items-center gap-1 text-sm bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg font-medium border border-teal-200 transition-colors"
               >
                 <Save className="w-4 h-4" /> 儲存
               </button>
             </div>
           ))}
+        </div>
+        <div className="mt-4 flex items-center gap-3 bg-teal-50/60 rounded-xl px-4 py-3 flex-wrap">
+          <input
+            type="time"
+            value={newTime}
+            onChange={(e) => setNewTime(e.target.value)}
+            className="w-28 px-2 py-1.5 border border-teal-200 rounded-lg text-sm font-mono font-bold text-teal-700 focus:ring-2 focus:ring-teal-500 outline-none"
+          />
+          <div className="flex items-center gap-1.5">
+            <label className="text-sm text-gray-500">座位</label>
+            <input
+              type="number" min={0} max={99}
+              value={newCapacity}
+              onChange={(e) => setNewCapacity(Number(e.target.value))}
+              className="w-16 px-2 py-1.5 border border-teal-200 rounded-lg text-sm text-center focus:ring-2 focus:ring-teal-500 outline-none"
+            />
+          </div>
+          <button
+            onClick={addSlot}
+            className="sm:ml-auto flex items-center gap-1 text-sm bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+          >
+            <Plus className="w-4 h-4" /> 新增班次
+          </button>
         </div>
       </div>
 
